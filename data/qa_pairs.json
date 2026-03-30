@@ -1,0 +1,122 @@
+[
+  {
+    "question": "ما النسبة التي حصل عليها حزب الوحدة الوطنية في الانتخابات؟",
+    "answer": "ثلاثة وثلاثين في المئة",
+    "source_file": "news/article_1.txt",
+    "concept": "سياسة"
+  },
+  {
+    "question": "ما الحكم الذي أصدرته المحكمة الدستورية بشأن الطعون الانتخابية؟",
+    "answer": "رفض الطعون المقدمة",
+    "source_file": "news/article_1.txt",
+    "concept": "سياسة"
+  },
+  {
+    "question": "ما معدل التضخم الذي كشف عنه البنك المركزي؟",
+    "answer": "أربعة بالمئة",
+    "source_file": "news/article_1.txt",
+    "concept": "اقتصاد"
+  },
+  {
+    "question": "ما توقعات صندوق النقد الدولي لمعدل النمو الاقتصادي؟",
+    "answer": "أربعة ونصف بالمئة",
+    "source_file": "news/article_1.txt",
+    "concept": "اقتصاد"
+  },
+  {
+    "question": "من فاز في مباراة ربع النهائي بين مصر والمغرب؟",
+    "answer": "المنتخب المصري بنتيجة ثلاثة أهداف مقابل هدفين",
+    "source_file": "news/article_2.txt",
+    "concept": "رياضة"
+  },
+  {
+    "question": "من يتصدر قائمة الهدافين في بطولة كأس الأمم العربية؟",
+    "answer": "سالم الدوسري برصيد خمسة أهداف",
+    "source_file": "news/article_2.txt",
+    "concept": "رياضة"
+  },
+  {
+    "question": "كم حجم التمويل الذي حصلت عليه شركة أرابيكس للذكاء الاصطناعي؟",
+    "answer": "مئتي مليون دولار",
+    "source_file": "news/article_2.txt",
+    "concept": "تكنولوجيا"
+  },
+  {
+    "question": "ما حجم الاستثمارات في قطاع التكنولوجيا بالدول العربية خلال العام الماضي؟",
+    "answer": "سبعة مليارات دولار",
+    "source_file": "news/article_2.txt",
+    "concept": "تكنولوجيا"
+  },
+  {
+    "question": "ما الهدف من الحملة الوطنية للتطعيم التي أطلقتها وزارة الصحة؟",
+    "answer": "التطعيم ضد الأمراض الموسمية",
+    "source_file": "news/article_3.txt",
+    "concept": "صحة"
+  },
+  {
+    "question": "كم عدد المستشفيات التي رصدت الحكومة ميزانية لاستكمال بنائها؟",
+    "answer": "ثمانية مستشفيات",
+    "source_file": "news/article_3.txt",
+    "concept": "صحة"
+  },
+  {
+    "question": "ما نسبة البطالة بين الشباب في بعض المناطق العربية؟",
+    "answer": "خمسة وعشرين بالمئة",
+    "source_file": "news/article_3.txt",
+    "concept": "مجتمع"
+  },
+  {
+    "question": "ما الإصلاحات التعليمية الجديدة التي أعلنت عنها وزارة التعليم؟",
+    "answer": "إدراج مواد التكنولوجيا والبرمجة في المناهج الدراسية",
+    "source_file": "news/article_3.txt",
+    "concept": "مجتمع"
+  },
+  {
+    "question": "ما الآية القرآنية التي تأمر بالمحافظة على الصلوات؟",
+    "answer": "حَافِظُواْ عَلَى الصَّلَوَاتِ وَالصَّلاَةِ الْوُسْطَى",
+    "source_file": "islamic/quran_tafsir_sample.txt",
+    "concept": "دين"
+  },
+  {
+    "question": "ما الصلاة الوسطى عند كثير من العلماء؟",
+    "answer": "صلاة العصر",
+    "source_file": "islamic/quran_tafsir_sample.txt",
+    "concept": "دين"
+  },
+  {
+    "question": "ما الحكمة التي يُحققها الصيام في نفس المؤمن؟",
+    "answer": "تحقيق التقوى",
+    "source_file": "islamic/quran_tafsir_sample.txt",
+    "concept": "علوم_قرآنية"
+  },
+  {
+    "question": "ماذا تقول الآية الكريمة عن فرض الصيام على الأمم السابقة؟",
+    "answer": "كُتِبَ عَلَيْكُمُ الصِّيَامُ كَمَا كُتِبَ عَلَى الَّذِينَ مِن قَبْلِكُمْ",
+    "source_file": "islamic/quran_tafsir_sample.txt",
+    "concept": "علوم_قرآنية"
+  },
+  {
+    "question": "إلى أين يهدي الصدق وفق الحديث النبوي؟",
+    "answer": "يهدي إلى البر وإن البر يهدي إلى الجنة",
+    "source_file": "islamic/hadith_sample.txt",
+    "concept": "دين"
+  },
+  {
+    "question": "ما حكم طلب العلم في الإسلام وفق الحديث النبوي؟",
+    "answer": "فريضة على كل مسلم",
+    "source_file": "islamic/hadith_sample.txt",
+    "concept": "دين"
+  },
+  {
+    "question": "ما الأعمال التي تُكفّر الذنوب الصغيرة بين فترتين؟",
+    "answer": "الصلوات الخمس والجمعة إلى الجمعة ورمضان إلى رمضان",
+    "source_file": "islamic/hadith_sample.txt",
+    "concept": "دين"
+  },
+  {
+    "question": "كيف شبّه النبي الواقع في الشبهات؟",
+    "answer": "كالراعي يرعى حول الحمى يوشك أن يرتع فيه",
+    "source_file": "islamic/hadith_sample.txt",
+    "concept": "دين"
+  }
+]
