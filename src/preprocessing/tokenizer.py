@@ -31,7 +31,7 @@ def tokenize(text: str) -> List[str]:
     return text.split()
 
 
-def sentence_tokenize(text: str, delimiters: str = '.!?؟،\n') -> List[str]:
+def sentence_tokenize(text: str, delimiters: str = '.!?؟\n') -> List[str]:
     """
     Split Arabic text into sentences.
 

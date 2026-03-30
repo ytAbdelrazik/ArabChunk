@@ -29,8 +29,12 @@ module is always free.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 # Public model name constants (import instead of hard-coding strings)
@@ -67,10 +71,11 @@ def _load_arabert(model_name: str):
     return SentenceTransformer(modules=[word_model, pool_model])
 
 
-def _encode_one(model, texts: List[str]) -> np.ndarray:
+def _encode_one(model, texts: List[str], batch_size: int = 32) -> np.ndarray:
     """Encode with one model, return L2-normalised float32 array."""
     embs = model.encode(
         texts,
+        batch_size=batch_size,
         show_progress_bar=False,
         convert_to_numpy=True,
         normalize_embeddings=True,   # L2 norm per model before averaging
@@ -133,10 +138,10 @@ class EnsembleEmbedder:
                 else:
                     model = _load_sbert(name)
                 self._loaded.append((name, model))
-                print(f"[ensemble] loaded {name}", flush=True)
+                logger.info("loaded %s", name)
             except Exception as exc:
                 self._failed.append(name)
-                print(f"[ensemble] WARNING: could not load {name}: {exc}", flush=True)
+                logger.warning("could not load %s: %s", name, exc)
 
         if not self._loaded:
             raise RuntimeError(
@@ -181,7 +186,7 @@ class EnsembleEmbedder:
 
         stack: List[np.ndarray] = []
         for (_, model), weight in zip(self._loaded, self._active_weights):
-            embs = _encode_one(model, texts)         # (N, 768), already L2-normed
+            embs = _encode_one(model, texts, self._batch_size)   # (N, 768), already L2-normed
             stack.append(embs * weight)
 
         ensemble = np.sum(stack, axis=0)             # weighted average

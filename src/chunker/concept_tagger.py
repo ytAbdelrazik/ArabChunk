@@ -14,12 +14,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Optional CAMeL Tools integration (graceful degradation if not installed)
@@ -29,6 +31,15 @@ try:
     _CAMEL_AVAILABLE = True
 except Exception:
     _CAMEL_AVAILABLE = False
+
+# ---------------------------------------------------------------------------
+# Keyword normalization at domain load time
+# ---------------------------------------------------------------------------
+try:
+    from ..preprocessing.normalizer import normalize as _normalize_kw
+except Exception:
+    def _normalize_kw(text: str, **kwargs) -> str:  # type: ignore[misc]
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -128,12 +139,13 @@ class ConceptTagger:
             try:
                 with path.open(encoding="utf-8") as fh:
                     data = json.load(fh)
-                # Build fast lookup sets
-                data["_kw_set"] = set(data.get("keywords", []))
-                data["_root_set"] = set(data.get("roots", []))
+                # Normalize keywords so they match the normalized input text
+                data["_kw_set"] = {_normalize_kw(k) for k in data.get("keywords", [])}
+                data["_root_set"] = {_normalize_kw(r) for r in data.get("roots", [])}
                 self._domains.append(data)
             except (json.JSONDecodeError, KeyError):
-                continue  # Skip malformed files silently
+                logger.warning("Skipping malformed domain file: %s", path)
+                continue
 
     def add_domain(self, path: Path) -> None:
         """
@@ -144,8 +156,8 @@ class ConceptTagger:
         """
         with Path(path).open(encoding="utf-8") as fh:
             data = json.load(fh)
-        data["_kw_set"] = set(data.get("keywords", []))
-        data["_root_set"] = set(data.get("roots", []))
+        data["_kw_set"] = {_normalize_kw(k) for k in data.get("keywords", [])}
+        data["_root_set"] = {_normalize_kw(r) for r in data.get("roots", [])}
         self._domains.append(data)
 
     # ------------------------------------------------------------------

@@ -26,12 +26,15 @@ limit, etc.), making the system fully explainable.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from .base_chunker import BaseChunker, Chunk
 from .concept_tagger import ConceptResult, ConceptTagger
@@ -167,6 +170,32 @@ class OntologyChunker(BaseChunker):
         Defaults to [SBERT-100K, Matryoshka-V2, AraBERT].
     ensemble_weights:
         Per-model weights.  Must sum to 1.0.  Defaults to equal weights.
+    embedder:
+        Optional pre-built EnsembleEmbedder to reuse across multiple
+        OntologyChunker instances (e.g. during a parameter sweep).
+        When supplied, the models are never re-loaded regardless of
+        ``ensemble_models`` / ``ensemble_weights``.
+    ontology_weight:
+        Only used when ``use_ensemble=True``.  Controls how much the
+        ontology signal contributes to the hybrid boundary score vs the
+        pure embedding cosine dissimilarity.
+
+        - 0.0  → pure embedding mode (original behaviour, no ontology).
+        - 0.5  → equal weight: ontology and embeddings both contribute.
+        - 1.0  → ontology only (same as ``use_ensemble=False`` but still
+                  requires model loading for the embedding side).
+
+        Boundary score = ontology_weight × ontology_signal
+                       + (1 − ontology_weight) × embedding_dissimilarity
+
+        A boundary is placed when score ≥ ``shift_threshold``.
+        Recommended starting value: 0.5.
+    confidence_drop_threshold:
+        In keyword mode only.  When the ontology confidence drops by at
+        least this amount between consecutive windows *within the same
+        concept*, a boundary is placed.  Catches intra-domain topic
+        drift (e.g. imagery → civilisation, both tagged as Literature).
+        Set to 1.0 to disable intra-domain splitting.  Default: 0.35.
     """
 
     def __init__(
@@ -181,6 +210,9 @@ class OntologyChunker(BaseChunker):
         use_ensemble: bool = True,
         ensemble_models: Optional[List[str]] = None,
         ensemble_weights: Optional[List[float]] = None,
+        ontology_weight: float = 0.5,
+        confidence_drop_threshold: float = 0.35,
+        embedder=None,
     ) -> None:
         if not (1 <= step <= window_size):
             raise ValueError("step must satisfy 1 <= step <= window_size")
@@ -196,11 +228,13 @@ class OntologyChunker(BaseChunker):
         self.max_sentences = max_sentences
         self.normalize_input = normalize_input
         self.use_ensemble = use_ensemble
+        self.ontology_weight = max(0.0, min(1.0, ontology_weight))
+        self.confidence_drop_threshold = confidence_drop_threshold
 
         self.tagger = ConceptTagger(domains_dir=domains_dir)
 
-        # Ensemble embedder — lazy-loaded on first use
-        self._embedder = None
+        # Ensemble embedder — use supplied instance or lazy-load on first use
+        self._embedder = embedder
         self._ensemble_models = ensemble_models
         self._ensemble_weights = ensemble_weights
 
@@ -305,6 +339,103 @@ class OntologyChunker(BaseChunker):
         return boundaries
 
     # ------------------------------------------------------------------
+    # Boundary detection — hybrid mode (ontology + embeddings combined)
+    # ------------------------------------------------------------------
+
+    def _find_boundaries_hybrid(
+        self, sentences: List[str]
+    ) -> List[tuple[int, str, ConceptResult]]:
+        """
+        Hybrid boundary detection: ontology signal + embedding dissimilarity.
+
+        For each consecutive window pair, computes:
+            ontology_signal  — how strongly the concept changed (0→1)
+            embed_signal     — cosine dissimilarity between window vectors (0→1)
+            combined         — weighted average of the two signals
+
+        A boundary is placed when combined >= shift_threshold.
+
+        This means ontology and embeddings CONFIRM each other:
+        - Strong ontology shift + high dissimilarity → very confident boundary.
+        - One signal alone can still trigger a boundary if strong enough.
+        """
+        n = len(sentences)
+        embedder = self._get_embedder()
+
+        window_positions = list(range(0, n, self.step))
+        window_texts = [
+            " ".join(sentences[pos: min(pos + self.window_size, n)])
+            for pos in window_positions
+        ]
+
+        # Encode all windows once — reused across all signal computations
+        embeddings = embedder.encode(window_texts)   # (W, 768), L2-normed
+
+        # Tag all windows once via ontology (hits cache on re-calls)
+        ontology: List[ConceptResult] = [
+            _tag_window(self.tagger, sentences, pos, self.window_size)
+            for pos in window_positions
+        ]
+
+        # ---- Per-transition scoring ------------------------------------
+        # Store events: (sent_idx, combined, ont_sig, emb_sig, curr_concept)
+        boundary_events: List[tuple] = []
+        last_boundary = 0
+
+        for k in range(len(window_positions) - 1):
+            sent_idx = window_positions[k + 1]
+            chunk_len = sent_idx - last_boundary
+
+            if chunk_len < self.min_sentences:
+                continue
+
+            # Embedding dissimilarity — cosine ∈ [-1,1], normalise to [0,1]
+            sim = float(np.dot(embeddings[k], embeddings[k + 1]))
+            embed_signal = max(0.0, (1.0 - sim) / 2.0)
+
+            # Ontology shift signal
+            prev_c, curr_c = ontology[k], ontology[k + 1]
+            if prev_c.concept != curr_c.concept:
+                # Cross-domain: strength = confidence of incoming concept
+                ontology_signal = curr_c.confidence
+            else:
+                # Intra-domain: strength = confidence drop (if any)
+                ontology_signal = max(0.0, prev_c.confidence - curr_c.confidence)
+
+            combined = (
+                self.ontology_weight * ontology_signal
+                + (1.0 - self.ontology_weight) * embed_signal
+            )
+
+            if combined >= self.shift_threshold:
+                boundary_events.append(
+                    (sent_idx, combined, ontology_signal, embed_signal, curr_c)
+                )
+                last_boundary = sent_idx
+
+        # ---- Build boundary list with reasons --------------------------
+        boundary_starts = [0] + [ev[0] for ev in boundary_events]
+        boundaries: List[tuple[int, str, ConceptResult]] = []
+
+        for b_idx, start in enumerate(boundary_starts):
+            end = boundary_starts[b_idx + 1] if b_idx + 1 < len(boundary_starts) else n
+            concept = self.tagger.tag(sentences[start:end])
+
+            if b_idx == 0:
+                reason = "start"
+            else:
+                _, combined, ont_sig, emb_sig, _ = boundary_events[b_idx - 1]
+                reason = (
+                    f"hybrid: score={combined:.3f} "
+                    f"[ontology={ont_sig:.2f} | embed_dissim={emb_sig:.2f}] "
+                    f"→ '{concept.concept}' ({concept.concept_en})"
+                )
+
+            boundaries.append((start, reason, concept))
+
+        return boundaries
+
+    # ------------------------------------------------------------------
     # Boundary detection — keyword mode (original algorithm)
     # ------------------------------------------------------------------
 
@@ -354,6 +485,24 @@ class OntologyChunker(BaseChunker):
                 prev_concept = curr_concept
                 in_chunk_since = i
 
+            # Rule 3 — intra-domain confidence drop (same concept, weakening signal)
+            elif (
+                prev_concept.concept == curr_concept.concept
+                and chunk_len >= self.min_sentences
+                and (prev_concept.confidence - curr_concept.confidence)
+                    >= self.confidence_drop_threshold
+            ):
+                boundaries.append((
+                    i,
+                    (
+                        f"confidence_drop: '{curr_concept.concept}' "
+                        f"{prev_concept.confidence:.2f}→{curr_concept.confidence:.2f}"
+                    ),
+                    curr_concept,
+                ))
+                prev_concept = curr_concept
+                in_chunk_since = i
+
             else:
                 if curr_concept.confidence > prev_concept.confidence:
                     prev_concept = curr_concept
@@ -371,13 +520,11 @@ class OntologyChunker(BaseChunker):
     ) -> List[tuple[int, str, ConceptResult]]:
         if self.use_ensemble:
             try:
+                if self.ontology_weight > 0.0:
+                    return self._find_boundaries_hybrid(sentences)
                 return self._find_boundaries_ensemble(sentences)
             except Exception as exc:
-                print(
-                    f"[OntologyChunker] WARNING: EnsembleEmbedder failed "
-                    f"({exc}), falling back to keyword mode.",
-                    flush=True,
-                )
+                logger.warning("EnsembleEmbedder failed (%s), falling back to keyword mode.", exc)
         return self._find_boundaries_keyword(sentences)
 
     # ------------------------------------------------------------------
