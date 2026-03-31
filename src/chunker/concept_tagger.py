@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+_MAX_CACHE_SIZE = 10_000   # max in-process cache entries before FIFO eviction
+
 # ---------------------------------------------------------------------------
 # Optional CAMeL Tools integration (graceful degradation if not installed)
 # ---------------------------------------------------------------------------
@@ -78,9 +80,11 @@ _ARABIC_SUFFIXES = re.compile(
 
 def _heuristic_stem(word: str) -> str:
     """Strip common Arabic prefixes/suffixes to approximate a stem."""
+    original = word
     word = _ARABIC_PREFIXES.sub('', word)
     word = _ARABIC_SUFFIXES.sub('', word)
-    return word if len(word) >= 2 else word
+    # Require at least 3 chars to protect trilateral roots; fall back to original
+    return word if len(word) >= 3 else original
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +275,8 @@ class ConceptTagger:
                 keywords=best_keywords[:10],
             )
 
+        if len(self._cache) >= _MAX_CACHE_SIZE:
+            self._cache.pop(next(iter(self._cache)))  # evict oldest (FIFO)
         self._cache[cache_key] = result
         return result
 

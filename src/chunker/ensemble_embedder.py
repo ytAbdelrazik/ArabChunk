@@ -194,6 +194,12 @@ class EnsembleEmbedder:
 
     @property
     def dim(self) -> int:
+        if self._loaded:
+            _, model = self._loaded[0]
+            try:
+                return model.get_sentence_embedding_dimension()
+            except Exception:
+                return _DIM
         return _DIM
 
     @property

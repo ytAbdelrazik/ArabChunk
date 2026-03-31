@@ -25,7 +25,7 @@ def chunk_and_print(
     full_text: bool = False,
     keyword_mode: bool = False,
     confidence_drop: float = 0.35,
-    ontology_weight: float = 0.5,
+    ontology_weight: float = 0.7,
 ):
     path = Path(filepath)
     if not path.exists():
@@ -82,7 +82,7 @@ if __name__ == "__main__":
                         help="Pure ontology mode: no embedding models, boundaries driven by concept shifts only")
     parser.add_argument("--confidence-drop", type=float, default=0.35,
                         help="Intra-domain confidence drop to trigger a split in keyword mode (default 0.35)")
-    parser.add_argument("--ontology-weight", type=float, default=0.5,
+    parser.add_argument("--ontology-weight", type=float, default=0.7,
                         help="Hybrid mode: 0.0=pure embedding, 0.5=balanced, 1.0=pure ontology (default 0.5)")
     args = parser.parse_args()
 

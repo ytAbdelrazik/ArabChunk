@@ -174,10 +174,10 @@ class TestBoundaryReasons:
     def test_shift_boundary_contains_arrow(self, chunker: OntologyChunker):
         chunks = chunker.chunk_rich(MIXED_TEXT)
         shift_chunks = [c for c in chunks if "→" in c.boundary_reason]
-        # Not guaranteed, but with clearly different domains it should appear
-        # (test is informational — just ensure the format is right when present)
+        # Not guaranteed, but with clearly different domains it should appear.
+        # Both concept_shift and confidence_drop reasons use →, so accept either.
         for c in shift_chunks:
-            assert "concept_shift" in c.boundary_reason
+            assert "concept_shift" in c.boundary_reason or "confidence_drop" in c.boundary_reason
 
 
 # ---------------------------------------------------------------------------

@@ -189,7 +189,7 @@ class OntologyChunker(BaseChunker):
                        + (1 − ontology_weight) × embedding_dissimilarity
 
         A boundary is placed when score ≥ ``shift_threshold``.
-        Recommended starting value: 0.5.
+        Recommended starting value: 0.7.
     confidence_drop_threshold:
         In keyword mode only.  When the ontology confidence drops by at
         least this amount between consecutive windows *within the same
@@ -210,7 +210,7 @@ class OntologyChunker(BaseChunker):
         use_ensemble: bool = True,
         ensemble_models: Optional[List[str]] = None,
         ensemble_weights: Optional[List[float]] = None,
-        ontology_weight: float = 0.5,
+        ontology_weight: float = 0.7,
         confidence_drop_threshold: float = 0.35,
         embedder=None,
     ) -> None:
@@ -303,7 +303,10 @@ class OntologyChunker(BaseChunker):
 
         # ---- Build boundary list ----------------------------------------
         # boundary_starts: list of sentence-level start indices
+        # pos_to_idx: O(1) reverse lookup from sentence position → window index
+        pos_to_idx = {pos: idx for idx, pos in enumerate(window_positions)}
         boundary_starts = [0]
+        max_size_idxs: set = set()   # indices in boundary_starts that hit the hard cap
         last_boundary = 0
 
         for k, sim in enumerate(similarities):
@@ -311,7 +314,12 @@ class OntologyChunker(BaseChunker):
             sent_idx = window_positions[k + 1]
             chunk_len = sent_idx - last_boundary
 
-            if sim < self.shift_threshold and chunk_len >= self.min_sentences:
+            if chunk_len >= self.max_sentences:
+                # Hard cap — always split regardless of similarity
+                boundary_starts.append(sent_idx)
+                max_size_idxs.add(len(boundary_starts) - 1)
+                last_boundary = sent_idx
+            elif sim < self.shift_threshold and chunk_len >= self.min_sentences:
                 boundary_starts.append(sent_idx)
                 last_boundary = sent_idx
 
@@ -323,10 +331,11 @@ class OntologyChunker(BaseChunker):
 
             if b_idx == 0:
                 reason = "start"
+            elif b_idx in max_size_idxs:
+                reason = f"max_size_limit ({self.max_sentences} sentences reached)"
             else:
-                # Find which similarity triggered this boundary
-                # (the window-step transition just before `start`)
-                k = window_positions.index(start) - 1
+                # O(1) lookup instead of O(n) list.index()
+                k = pos_to_idx.get(start, 1) - 1
                 sim_val = similarities[k] if 0 <= k < len(similarities) else 0.0
                 reason = (
                     f"ensemble_cosine_drop: sim={sim_val:.3f} < "
@@ -379,12 +388,20 @@ class OntologyChunker(BaseChunker):
 
         # ---- Per-transition scoring ------------------------------------
         # Store events: (sent_idx, combined, ont_sig, emb_sig, curr_concept)
+        # None in the combined slot signals a max_size hard-cap boundary.
         boundary_events: List[tuple] = []
         last_boundary = 0
 
         for k in range(len(window_positions) - 1):
             sent_idx = window_positions[k + 1]
             chunk_len = sent_idx - last_boundary
+
+            # Hard cap — always split before computing signals
+            if chunk_len >= self.max_sentences:
+                curr_c = ontology[k + 1]
+                boundary_events.append((sent_idx, None, None, None, curr_c))
+                last_boundary = sent_idx
+                continue
 
             if chunk_len < self.min_sentences:
                 continue
@@ -425,11 +442,14 @@ class OntologyChunker(BaseChunker):
                 reason = "start"
             else:
                 _, combined, ont_sig, emb_sig, _ = boundary_events[b_idx - 1]
-                reason = (
-                    f"hybrid: score={combined:.3f} "
-                    f"[ontology={ont_sig:.2f} | embed_dissim={emb_sig:.2f}] "
-                    f"→ '{concept.concept}' ({concept.concept_en})"
-                )
+                if combined is None:
+                    reason = f"max_size_limit ({self.max_sentences} sentences reached)"
+                else:
+                    reason = (
+                        f"hybrid: score={combined:.3f} "
+                        f"[ontology={ont_sig:.2f} | embed_dissim={emb_sig:.2f}] "
+                        f"→ '{concept.concept}' ({concept.concept_en})"
+                    )
 
             boundaries.append((start, reason, concept))
 
@@ -512,6 +532,49 @@ class OntologyChunker(BaseChunker):
         return boundaries
 
     # ------------------------------------------------------------------
+    # Boundary refinement — pin each boundary to the exact sentence
+    # ------------------------------------------------------------------
+
+    def _refine_boundaries(
+        self,
+        sentences: List[str],
+        boundaries: List[tuple[int, str, ConceptResult]],
+    ) -> List[tuple[int, str, ConceptResult]]:
+        """
+        Shift each detected boundary back to the earliest sentence that
+        already belongs to the incoming concept.
+
+        Sliding-window detection places a boundary at window_positions[k+1]
+        — the start of the NEXT window — which can be several sentences
+        after the actual topic shift.  This method walks backward one
+        sentence at a time and moves the boundary as far left as the concept
+        tag still matches the incoming concept, stopping when:
+          - the tag reverts to the previous concept, or
+          - the previous chunk would fall below min_sentences.
+        """
+        if len(boundaries) <= 1:
+            return boundaries
+
+        refined: List[tuple[int, str, ConceptResult]] = [boundaries[0]]
+
+        for start, reason, concept in boundaries[1:]:
+            prev_start = refined[-1][0]
+            min_pos = prev_start + self.min_sentences
+
+            best = start
+            for p in range(start - 1, min_pos - 1, -1):
+                end = min(p + self.window_size, len(sentences))
+                tag = self.tagger.tag(sentences[p:end])
+                if tag.concept == concept.concept:
+                    best = p
+                else:
+                    break
+
+            refined.append((best, reason, concept))
+
+        return refined
+
+    # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
 
@@ -521,11 +584,16 @@ class OntologyChunker(BaseChunker):
         if self.use_ensemble:
             try:
                 if self.ontology_weight > 0.0:
-                    return self._find_boundaries_hybrid(sentences)
-                return self._find_boundaries_ensemble(sentences)
+                    boundaries = self._find_boundaries_hybrid(sentences)
+                else:
+                    boundaries = self._find_boundaries_ensemble(sentences)
             except Exception as exc:
                 logger.warning("EnsembleEmbedder failed (%s), falling back to keyword mode.", exc)
-        return self._find_boundaries_keyword(sentences)
+                boundaries = self._find_boundaries_keyword(sentences)
+        else:
+            boundaries = self._find_boundaries_keyword(sentences)
+
+        return self._refine_boundaries(sentences, boundaries)
 
     # ------------------------------------------------------------------
     # Chunk assembly from boundaries
@@ -551,6 +619,7 @@ class OntologyChunker(BaseChunker):
         """
         Merge chunks smaller than min_sentences into their nearest neighbour.
         Preference: merge into the *previous* chunk (topic continuation).
+        If the *first* chunk is too small it is merged forward into the second.
         """
         if not chunks:
             return chunks
@@ -574,6 +643,24 @@ class OntologyChunker(BaseChunker):
                 )
             else:
                 merged.append(curr)
+
+        # If the first chunk is still too small, merge it forward into the second
+        if len(merged) > 1 and merged[0].sentence_count < self.min_sentences:
+            first, second = merged[0], merged[1]
+            combined = first.sentences + second.sentences
+            dominant = first if first.confidence >= second.confidence else second
+            merged[1] = _build_chunk(
+                combined,
+                ConceptResult(
+                    concept=dominant.concept,
+                    concept_en=dominant.concept_en,
+                    confidence=dominant.confidence,
+                    keywords=dominant.keywords,
+                ),
+                second.chunk_index,
+                second.boundary_reason + " [merged_small_chunk]",
+            )
+            merged.pop(0)
 
         return merged
 
